@@ -1,109 +1,82 @@
-schema: tb
-pipeline:
-- name: 测试
-  stages:
-  - driven: AUTO
-    jobs:
-    - displayName: JavaScript 代码扫描
-      task: execution-component-production@10
-      identifier: '10_1624867297475'
-      templateType: task
-      templateSign: ''
-      templateBatchUpdate: N
-      extraInfo: ''
-      params:
-        steps:
-        - name: JavaScript 代码扫描
-          stepType: js_code_scan
-          stepIdentifier: '10_1624867297475__11_1624867297479'
-          USE_LOCAL_RULES: false
-          USE_LOCAL_DEPENDENCIES: false
-          EXCLUSION: |
-            test/
-            node_modules/
-            vendor/
-          CHECK_REDLINES: ''
-          freeInTaskGroupModeFields: []
-        ENGINE_PIPELINE_NAME: ${INPUTS.ENGINE_PIPELINE_NAME}
-        ENGINE_PIPELINE_ID: ${INPUTS.ENGINE_PIPELINE_ID}
-        ENGINE_PIPELINE_INST_ID: ${INPUTS.ENGINE_PIPELINE_INST_ID}
-        ENGINE_PIPELINE_INST_NUMBER: ${INPUTS.ENGINE_PIPELINE_INST_NUMBER}
-        buildNodeGroup: K8S-4
-      plugins: []
-      output: []
-      freeInTaskGroupModeFields: []
-  - driven: AUTO
-    jobs:
-    - displayName: Node.js 单元测试
-      task: execution-component-production@10
-      identifier: '12_1624867297481'
-      templateType: task
-      templateSign: ''
-      templateBatchUpdate: N
-      extraInfo: ''
-      params:
-        steps:
-        - name: Node.js 单元测试
-          stepType: node-unit-test
-          stepIdentifier: '12_1624867297481__13_1624867297482'
-          TEST_REPORT_PATH: mochawesome-report
-          TEST_REPORT_INDEX: mochawesome.html
-          TEST_REPORT_FILE: mochawesome.json
-          version: '14.8'
-          command: |
-            # input your test command here
-            cnpm install && npm run test
-          CHECK_REDLINES: ''
-          freeInTaskGroupModeFields: []
-        ENGINE_PIPELINE_NAME: ${INPUTS.ENGINE_PIPELINE_NAME}
-        ENGINE_PIPELINE_ID: ${INPUTS.ENGINE_PIPELINE_ID}
-        ENGINE_PIPELINE_INST_ID: ${INPUTS.ENGINE_PIPELINE_INST_ID}
-        ENGINE_PIPELINE_INST_NUMBER: ${INPUTS.ENGINE_PIPELINE_INST_NUMBER}
-        buildNodeGroup: K8S-4
-      plugins: []
-      output: []
-      freeInTaskGroupModeFields: []
-- name: 构建上传
-  stages:
-  - driven: AUTO
-    jobs:
-    - displayName: Node.js 构建上传 oss
-      task: execution-component-production@10
-      identifier: '14_1624867297485'
-      templateType: task
-      templateSign: ''
-      templateBatchUpdate: N
-      extraInfo: ''
-      params:
-        steps:
-        - name: Node.js 构建
-          stepType: node_build
-          stepIdentifier: '14_1624867297485__15_1624867297486'
-          command: cnpm install && npm run build
-          CI_RUNTIME_VERSION: 12.2
-          USE_NPM_CACHE: true
-          freeInTaskGroupModeFields: []
-        - name: 设置变量
-          stepType: set-variables
-          stepIdentifier: '14_1624867297485__10_1624867859234'
-          freeInTaskGroupModeFields: []
-          VARIABLE_NAME: RUNTIME_VER
-          VARIABLE_VALUE: 1.0.1
-        - name: OSS 上传
-          stepType: oss_ram_sc_production
-          stepIdentifier: '14_1624867297485__16_1624867297490'
-          UPLOAD_PATH: build
-          SERVICE_CONNECTION_ID: ${connectionId}
-          OSS_REGION: ${regionId}
-          OSS_BUCKET: ${ossBucket}
-          OSS_PATH: ${ossPath}
-          METAS: '[]'
-          freeInTaskGroupModeFields: [METAS]
-        ENGINE_PIPELINE_NAME: ${INPUTS.ENGINE_PIPELINE_NAME}
-        ENGINE_PIPELINE_ID: ${INPUTS.ENGINE_PIPELINE_ID}
-        ENGINE_PIPELINE_INST_ID: ${INPUTS.ENGINE_PIPELINE_INST_ID}
-        ENGINE_PIPELINE_INST_NUMBER: ${INPUTS.ENGINE_PIPELINE_INST_NUMBER}
-        buildNodeGroup: K8S-4
-      plugins: []
-      output: []
-      freeInTaskGroupModeFields: []
+# This workflow will do a clean install of node dependencies, build the source code and run tests across different versions of node
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
+
+name: FE Project CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'version'
+        required: true
+        default: '1.0.7'
+      oss_region:
+        description: 'oss region'
+        required: true
+        default: 'oss-cn-shanghai'
+      oss_bucket:
+        description: 'oss bucket'
+        required: true
+        default: 'default'
+      oss_path:
+        description: 'oss path'
+        required: false
+        default: ''
+      upload_path:
+        description: 'upload path'
+        required: true
+        default: 'build'
+
+jobs:
+  pre-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: check config files
+        run: test -f ./package.json && exit 0 || (echo 'package.json is not exist!' && exit 1)
+
+  unit-test:
+    needs: pre-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: node-unit-test
+        run: npm install --registry https://registry.npm.taobao.org/ && npm run test --if-present
+
+
+  build-and-deploy:
+    needs: unit-test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [12.x]
+        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: install deps
+        run: npm install --registry https://registry.npm.taobao.org/
+
+      - name: build
+        run: npm run build --if-present
+
+      - name: deploy
+        id: upload_to_oss
+        uses: royalrover/workbench-oss@master
+        with:
+          ACCESS_KEY: ${{ secrets.AK }}
+          ACCESS_SECRET: ${{ secrets.SK }}
+          OSS_REGION: ${{github.event.inputs.oss_region}}
+          OSS_BUCKET: ${{github.event.inputs.oss_bucket}}
+          OSS_PATH: ${{github.event.inputs.oss_path}}/${{github.event.inputs.version}}
+          UPLOAD_PATH: ${{github.event.inputs.upload_path}}
+
+
